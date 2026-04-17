@@ -419,7 +419,7 @@
   <div id="mapTitle" class="map-header-box">
     <img class="header-icon" src="icons/header-left.png" alt="">
     <span id="mapTitleText"></span>
-    <img class="header-icon" src="iconsheader-left.png" alt="">
+    <img class="header-icon" src="icons/header-right.png" alt="">
   </div>
 </div>
 
@@ -566,6 +566,19 @@
 
       if (/facebook\.com/i.test(href)) {
         a.textContent = 'פייסבוק';
+
+        const parentText = (a.parentNode?.textContent || '').trim();
+        if (/^fb\s*:?\s*$/i.test(parentText.replace('פייסבוק', '').trim())) {
+          a.parentNode.innerHTML = '';
+          a.parentNode.appendChild(a);
+        }
+      }
+    });
+
+    temp.querySelectorAll('*').forEach((el) => {
+      const text = (el.textContent || '').trim();
+      if (/^FB\s*:?\s*$/i.test(text) && el.children.length === 0) {
+        el.remove();
       }
     });
 
@@ -638,8 +651,10 @@
     for (const p of parts) {
       if (/^https?:\/\//i.test(p)) continue;
       if (/facebook\.com/i.test(p)) continue;
+      if (/^fb\s*:?\s*$/i.test(p)) continue;
+      if (/^פייסבוק$/i.test(p)) continue;
       lines.push(p);
-      if (lines.length >= 4) break;
+      if (lines.length >= 5) break;
     }
 
     return lines;
@@ -931,7 +946,7 @@
       document.removeEventListener('pointerup', onPointerUp);
     }
 
-    searchHeader.addEventListener('pointerdown', () => {
+    searchHeader.addEventListener('pointerdown', (event) => {
       isDragging = true;
       startX = event.clientX;
       startY = event.clientY;
