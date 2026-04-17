@@ -69,10 +69,6 @@
       text-align: center;
     }
 
-    .leaflet-control-layers {
-      font-size: 14px;
-    }
-
     .status-box {
       position: absolute;
       z-index: 1000;
@@ -186,13 +182,19 @@
       font-size: 16px;
     }
 
-    .search-panel input {
+    .search-panel input[type="text"] {
       width: 100%;
       box-sizing: border-box;
       padding: 8px;
       font-size: 14px;
       border: 1px solid #bbb;
       border-radius: 6px;
+    }
+
+    .search-exact {
+      display: block;
+      margin-top: 8px;
+      font-size: 13px;
     }
 
     .search-results {
@@ -228,21 +230,22 @@
     .custom-marker {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 2px;
       white-space: nowrap;
-      transform: translate(-8px, -36px);
+      transform: translate(-4px, -18px);
+      direction: ltr;
     }
 
     .custom-marker img {
-      width: 28px;
-      height: 40px;
+      width: 14px;
+      height: 20px;
       object-fit: contain;
       display: block;
       flex: 0 0 auto;
     }
 
     .custom-marker-label {
-      font-size: 26px;
+      font-size: 13px;
       font-weight: bold;
       color: #083c68;
       text-shadow:
@@ -268,6 +271,14 @@
       border-radius: 10px;
       box-shadow: 0 1px 6px rgba(0,0,0,0.15);
       padding: 8px;
+    }
+
+    .layers-list-title {
+      font-weight: bold;
+      font-size: 16px;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #ddd;
     }
 
     .layer-block {
@@ -341,12 +352,12 @@
       }
 
       .custom-marker img {
-        width: 22px;
-        height: 32px;
+        width: 14px;
+        height: 20px;
       }
 
       .custom-marker-label {
-        font-size: 18px;
+        font-size: 13px;
       }
 
       .search-toggle {
@@ -399,11 +410,22 @@
       <button id="searchClose" class="search-mini-btn" title="סגור">✕</button>
     </div>
   </div>
+
   <input id="searchInput" type="text" placeholder="חיפוש לפי שם, Badge, מזהה, FB, תאריך..." />
+
+  <label class="search-exact">
+    <input id="exactSearch" type="checkbox" />
+    חיפוש מדויק
+  </label>
+
   <div id="searchResults" class="search-results"></div>
 </div>
 
-<div id="layersList" class="layers-list-panel"></div>
+<div id="layersList" class="layers-list-panel">
+  <div class="layers-list-title">רשימת יעלים ממויינת</div>
+  <div id="layersListBody"></div>
+</div>
+
 <div id="status" class="status-box">טוען שכבות...</div>
 
 <script
@@ -444,8 +466,9 @@
   const searchClose = document.getElementById('searchClose');
   const searchMinimize = document.getElementById('searchMinimize');
   const searchInput = document.getElementById('searchInput');
+  const exactSearch = document.getElementById('exactSearch');
   const searchResultsEl = document.getElementById('searchResults');
-  const layersListEl = document.getElementById('layersList');
+  const layersListEl = document.getElementById('layersListBody');
 
   const overlays = {};
   const layerRegistry = {};
@@ -559,9 +582,9 @@
           <div class="custom-marker-label">${escapeHtml(labelText)}</div>
         </div>
       `,
-      iconSize: [140, 42],
-      iconAnchor: [18, 40],
-      popupAnchor: [0, -36]
+      iconSize: [70, 21],
+      iconAnchor: [9, 20],
+      popupAnchor: [0, -18]
     });
   }
 
@@ -600,19 +623,30 @@
     });
   }
 
-  function doSearch() {
-    const q = searchInput.value.trim().toLowerCase();
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 
-    if (!q) {
+  function doSearch() {
+    const q = searchInput.value.trim();
+    const qLower = q.toLowerCase();
+    const exact = exactSearch.checked;
+
+    if (!qLower) {
       searchResultsEl.innerHTML = '';
       return;
     }
 
-    const results = searchableItems
-      .filter(item => item.searchTextLower.includes(q))
-      .slice(0, MAX_SEARCH_RESULTS);
+    let results;
 
-    renderSearchResults(results);
+    if (exact) {
+      const pattern = new RegExp(`(^|[^A-Za-z0-9_])${escapeRegExp(qLower)}([^A-Za-z0-9_]|$)`, 'i');
+      results = searchableItems.filter(item => pattern.test(item.searchTextLower));
+    } else {
+      results = searchableItems.filter(item => item.searchTextLower.includes(qLower));
+    }
+
+    renderSearchResults(results.slice(0, MAX_SEARCH_RESULTS));
   }
 
   function buildLayerList() {
@@ -629,13 +663,14 @@
           <div class="layer-title">${escapeHtml(layerInfo.label)} (${layerInfo.items.length})</div>
           <div class="layer-tools">
             <button data-action="toggle-layer">${map.hasLayer(layerInfo.layer) ? 'הסתר' : 'הצג'}</button>
-            <button data-action="toggle-items">פריטים</button>
+            <button data-action="toggle-items">יעלים</button>
           </div>
         </div>
         <div id="${itemsId}" class="layer-items"></div>
       `;
 
       const itemsDiv = block.querySelector('.layer-items');
+
       layerInfo.items.forEach(item => {
         const row = document.createElement('div');
         row.className = 'layer-item';
@@ -777,10 +812,6 @@
         }
       });
 
-      L.control.layers(null, overlays, {
-        collapsed: false
-      }).addTo(map);
-
       buildLayerList();
 
       if (allBounds.length > 0) {
@@ -813,6 +844,7 @@
   });
 
   searchInput.addEventListener('input', doSearch);
+  exactSearch.addEventListener('change', doSearch);
 
   (function makeSearchPanelDraggable() {
     let isDragging = false;
