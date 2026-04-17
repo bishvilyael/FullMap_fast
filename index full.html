@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Leaflet KML Layers - FAST</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+  <style>
+    html, body { height:100%; margin:0; font-family:Arial; }
+    #map { height:100%; }
+
+    .popup-body img {
+      max-width:100%;
+      max-height:240px;
+      object-fit:contain;
+    }
+
+    .marker-label {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      color: #083c68;
+      font-weight: bold;
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+const KML_FILES = [
+  { label:'0', file:'kml/0.kml', visible:true },
+  { label:'1-1499', file:'kml/1-1499.kml', visible:true },
+  { label:'1500-2999', file:'kml/1500-2999.kml', visible:true }
+];
+
+const map = L.map('map', { preferCanvas:true }).setView([31.5,34.8],7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+const overlays = {};
+const layerRegistry = {};
+const allBounds = [];
+const searchableItems = [];
+
+function escapeHtml(t){ const d=document.createElement('div'); d.textContent=t||''; return d.innerHTML; }
+
+function convertDriveUrl(url){
+  const m = url.match(/[-\w]{25,}/);
+  return m ? `https://lh3.googleusercontent.com/d/${m[0]}=w600` : url;
+}
+
+function parseCoord(str){
+  if(!str) return null;
+  const p = str.trim().split(',');
+  return {lat:+p[1], lon:+p[0]};
+}
+
+function getText(node,tag){
+  const el=node.getElementsByTagName(tag)[0];
+  return el?el.textContent:'';
+}
+
+async function loadKmlLayer(file,label){
+  const res = await fetch(file);
+  const txt = await res.text();
+
+  const xml = new DOMParser().parseFromString(txt,'text/xml');
+  const placemarks = xml.getElementsByTagName('Placemark');
+
+  const layer = L.layerGroup();
+  const items = [];
+
+  for(let i=0;i<placemarks.length;i++){
+    const p = placemarks[i];
+
+    const name = getText(p,'name');
+    let desc = getText(p,'description');
+
+    desc = desc.replace(/src="([^"]+)"/g,(m,u)=>`src="${convertDriveUrl(u)}"`);
+
+    const coord = parseCoord(getText(p,'coordinates'));
+    if(!coord) continue;
+
+    const marker = L.circleMarker([coord.lat,coord.lon],{
+      radius:6,
+      color:'#083c68',
+      fillColor:'#2a7bbd',
+      fillOpacity:0.9
+    });
+
+    marker.bindTooltip(name,{
+      permanent:true,
+      direction:'top',
+      offset:[0,-6],
+      className:'marker-label'
+    });
+
+    marker.on('click',()=>{
+      marker.bindPopup(`
+        <div>
+          <b>${escapeHtml(name)}</b><br>
+          <div class="popup-body">${desc}</div>
+        </div>
+      `).openPopup();
+    });
+
+    layer.addLayer(marker);
+    allBounds.push([coord.lat,coord.lon]);
+
+    const searchText = (name + " " + desc).toLowerCase();
+
+    const item = {name,lat:coord.lat,lon:coord.lon,marker,searchText,label};
+    searchableItems.push(item);
+    items.push(item);
+  }
+
+  return {layer,label,items};
+}
+
+async function ensureLayer(label){
+  const entry = overlays[label];
+
+  if(entry.loaded) return;
+
+  const loaded = await loadKmlLayer(entry.file,label);
+  overlays[label] = {...loaded, loaded:true};
+  layerRegistry[label] = loaded;
+
+  map.addLayer(loaded.layer);
+}
+
+function doSearch(q){
+  q=q.toLowerCase();
+
+  const res = searchableItems.filter(i=>i.searchText.includes(q)).slice(0,50);
+
+  res.forEach(r=>{
+    map.setView([r.lat,r.lon],15);
+    r.marker.openPopup();
+  });
+}
+
+async function init(){
+  KML_FILES.forEach((k,i)=>{
+    overlays[k.label] = {file:k.file, loaded:false};
+
+    if(i===0){
+      ensureLayer(k.label);
+    }
+  });
+}
+
+map.on('zoomend',()=>{
+  const z = map.getZoom();
+
+  if(z>8) ensureLayer('1-1499');
+  if(z>10) ensureLayer('1500-2999');
+});
+
+init();
+</script>
+
+</body>
+</html>
