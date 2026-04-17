@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<title>Leaflet Fast Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+html, body { height:100%; margin:0; }
+#map { height:100%; }
+
+.popup-body img{
+  max-width:100%;
+  max-height:220px;
+  object-fit:contain;
+}
+</style>
+</head>
+
+<body>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+const KML_FILES = [
+  { label:'1-1499', file:'kml/1-1499.kml' },
+  { label:'1500-2999', file:'kml/1500-2999.kml' },
+  { label:'3000-4499', file:'kml/3000-4499.kml' }
+];
+
+const map = L.map('map', { preferCanvas:true })
+  .setView([31.5,34.8],7);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
+.addTo(map);
+
+const layers = {};
+const allBounds = [];
+
+function convertDriveUrl(url){
+  const m = url.match(/[-\w]{25,}/);
+  return m ? `https://lh3.googleusercontent.com/d/${m[0]}=w600` : url;
+}
+
+function parseKML(text){
+  const xml = new DOMParser().parseFromString(text,'text/xml');
+  return xml.getElementsByTagName('Placemark');
+}
+
+function getText(node,tag){
+  const el = node.getElementsByTagName(tag)[0];
+  return el ? el.textContent : '';
+}
+
+function parseCoord(str){
+  if(!str) return null;
+  const p = str.trim().split(','); 
+  return {lat:+p[1], lon:+p[0]};
+}
+
+function createMarker(lat,lon){
+  return L.circleMarker([lat,lon],{
+    radius:5,
+    color:'#083c68',
+    fillColor:'#2a7bbd',
+    fillOpacity:0.8
+  });
+}
+
+function buildPopup(name,html){
+  return `
+    <div>
+      <b>${name}</b><br>
+      <div class="popup-body">${html}</div>
+    </div>
+  `;
+}
+
+async function loadLayer(label){
+  if(layers[label]?.loaded) return;
+
+  const file = layers[label].file;
+  const res = await fetch(file);
+  const txt = await res.text();
+
+  const placemarks = parseKML(txt);
+  const group = L.layerGroup();
+
+  for(let i=0;i<placemarks.length;i++){
+    const p = placemarks[i];
+
+    const name = getText(p,'name');
+    let desc = getText(p,'description');
+
+    desc = desc.replace(/src="([^"]+)"/g,(m,url)=>{
+      return `src="${convertDriveUrl(url)}"`;
+    });
+
+    const coord = parseCoord(getText(p,'coordinates'));
+    if(!coord) continue;
+
+    const marker = createMarker(coord.lat,coord.lon);
+
+    marker.on('click',()=>{
+      marker.bindPopup(buildPopup(name,desc)).openPopup();
+    });
+
+    group.addLayer(marker);
+    allBounds.push([coord.lat,coord.lon]);
+  }
+
+  layers[label].layer = group;
+  layers[label].loaded = true;
+
+  map.addLayer(group);
+
+  if(allBounds.length){
+    map.fitBounds(allBounds,{padding:[20,20]});
+  }
+}
+
+function init(){
+  KML_FILES.forEach(item=>{
+    layers[item.label] = {
+      file:item.file,
+      loaded:false,
+      layer:null
+    };
+  });
+
+  // טען רק שכבה ראשונה (מהיר מאוד)
+  loadLayer(KML_FILES[0].label);
+}
+
+map.on('zoomend',()=>{
+  const z = map.getZoom();
+
+  // טעינה הדרגתית לפי זום (קריטי לנייד)
+  if(z>8) loadLayer(KML_FILES[1].label);
+  if(z>10) loadLayer(KML_FILES[2].label);
+});
+
+init();
+</script>
+</body>
+</html>
