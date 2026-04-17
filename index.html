@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <title>Leaflet KML Viewer</title>
+  <title>Leaflet KML Layers</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <link
@@ -24,48 +24,16 @@
       height: 100%;
     }
 
-    .leaflet-popup-content-wrapper {
-      border-radius: 10px;
-    }
-
     .leaflet-popup-content {
-      margin: 12px 14px;
-      min-width: 280px;
-      max-width: 340px;
       direction: rtl;
       text-align: right;
+      min-width: 220px;
+      max-width: 320px;
       line-height: 1.4;
+    }
+
+    .leaflet-control-layers {
       font-size: 14px;
-    }
-
-    .popup-title {
-      font-weight: bold;
-      font-size: 16px;
-      margin-bottom: 8px;
-    }
-
-    .popup-body img {
-      display: block;
-      max-width: 100%;
-      max-height: 260px;
-      width: auto;
-      height: auto;
-      object-fit: contain;
-      margin: 8px auto;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      background: #fff;
-    }
-
-    .popup-body a {
-      word-break: break-word;
-    }
-
-    .popup-image-error {
-      color: #b00020;
-      font-size: 12px;
-      margin-top: 6px;
-      text-align: center;
     }
 
     .status-box {
@@ -79,13 +47,15 @@
       border-radius: 8px;
       font-size: 13px;
       box-shadow: 0 1px 6px rgba(0,0,0,0.15);
+      max-width: 260px;
+      white-space: pre-line;
     }
   </style>
 </head>
 <body>
 
 <div id="map"></div>
-<div id="status" class="status-box">טוען קובץ KML...</div>
+<div id="status" class="status-box">טוען שכבות...</div>
 
 <script
   src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -94,7 +64,16 @@
 ></script>
 
 <script>
-  const KML_FILE = '260301-260301.kml';
+  const KML_FILES = [
+    { label: '0', file: 'kml/0.kml', visible: true },
+    { label: '1-1499', file: 'kml/1-1499.kml', visible: false },
+    { label: '1500-2999', file: 'kml/1500-2999.kml', visible: false },
+    { label: '3000-4499', file: 'kml/3000-4499.kml', visible: false },
+    { label: '4500-5999', file: 'kml/4500-5999.kml', visible: false },
+    { label: '6000-7499', file: 'kml/6000-7499.kml', visible: false },
+    { label: '7500-8999', file: 'kml/7500-8999.kml', visible: false },
+    { label: '9000-10499', file: 'kml/9000-10499.kml', visible: false }
+  ];
 
   const map = L.map('map', {
     preferCanvas: true
@@ -105,64 +84,18 @@
   }).addTo(map);
 
   const statusEl = document.getElementById('status');
+  const overlays = {};
+  const allBounds = [];
+  let totalMarkers = 0;
+  let loadedLayers = 0;
 
   function setStatus(text) {
     statusEl.textContent = text;
   }
 
-  function extractDriveFileId(url) {
-    if (!url) return null;
-
-    let m = url.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/i);
-    if (m) return m[1];
-
-    m = url.match(/drive\.google\.com\/uc\?[^"' ]*id=([A-Za-z0-9_-]+)/i);
-    if (m) return m[1];
-
-    m = url.match(/drive\.google\.com\/thumbnail\?[^"' ]*id=([A-Za-z0-9_-]+)/i);
-    if (m) return m[1];
-
-    m = url.match(/lh3\.googleusercontent\.com\/d\/([A-Za-z0-9_-]+)/i);
-    if (m) return m[1];
-
-    return null;
-  }
-
-  function convertDriveUrl(url) {
-    const fileId = extractDriveFileId(url);
-    if (!fileId) return url;
-    return `https://lh3.googleusercontent.com/d/${fileId}=w1000`;
-  }
-
-  function normalizeDescriptionHtml(html) {
-    const temp = document.createElement('div');
-    temp.innerHTML = html || '';
-
-    const imgs = temp.querySelectorAll('img');
-
-    imgs.forEach((img) => {
-      const originalSrc = img.getAttribute('src') || '';
-      const newSrc = convertDriveUrl(originalSrc);
-
-      img.setAttribute('src', newSrc);
-      img.setAttribute('loading', 'lazy');
-
-      img.onerror = function () {
-        const err = document.createElement('div');
-        err.className = 'popup-image-error';
-        err.textContent = 'התמונה לא נטענה';
-        this.insertAdjacentElement('afterend', err);
-        this.style.display = 'none';
-      };
-    });
-
-    const links = temp.querySelectorAll('a');
-    links.forEach((a) => {
-      a.setAttribute('target', '_blank');
-      a.setAttribute('rel', 'noopener noreferrer');
-    });
-
-    return temp.innerHTML;
+  function getFirstTagText(parent, tagName) {
+    const node = parent.getElementsByTagName(tagName)[0];
+    return node ? node.textContent.trim() : '';
   }
 
   function parseCoordinates(coordText) {
@@ -182,79 +115,117 @@
     return { lat, lon };
   }
 
-  function getNodeText(parent, tagName) {
-    const node = parent.getElementsByTagName(tagName)[0];
-    return node ? node.textContent.trim() : '';
-  }
-
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text || '';
     return div.innerHTML;
   }
 
-  async function loadKml() {
+  async function loadKmlLayer(filePath, layerLabel) {
+    const response = await fetch(filePath);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${filePath} (HTTP ${response.status})`);
+    }
+
+    const kmlText = await response.text();
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(kmlText, 'application/xml');
+
+    const parseError = xml.getElementsByTagName('parsererror');
+    if (parseError.length > 0) {
+      throw new Error(`XML parse error in ${filePath}`);
+    }
+
+    const placemarks = xml.getElementsByTagName('Placemark');
+    const layerGroup = L.layerGroup();
+    const layerBounds = [];
+    let markerCount = 0;
+
+    for (let i = 0; i < placemarks.length; i++) {
+      const placemark = placemarks[i];
+
+      const name = getFirstTagText(placemark, 'name') || 'ללא שם';
+      const description = getFirstTagText(placemark, 'description');
+      const coordinates = getFirstTagText(placemark, 'coordinates');
+
+      const coord = parseCoordinates(coordinates);
+      if (!coord) continue;
+
+      const popupHtml = `
+        <div>
+          <div style="font-weight:bold; margin-bottom:6px;">${escapeHtml(name)}</div>
+          ${description ? `<div>${description}</div>` : ''}
+        </div>
+      `;
+
+      const marker = L.marker([coord.lat, coord.lon]);
+      marker.bindPopup(popupHtml);
+
+      layerGroup.addLayer(marker);
+      layerBounds.push([coord.lat, coord.lon]);
+      allBounds.push([coord.lat, coord.lon]);
+      markerCount++;
+    }
+
+    return {
+      layer: layerGroup,
+      count: markerCount,
+      bounds: layerBounds,
+      label: layerLabel
+    };
+  }
+
+  async function initMap() {
     try {
-      const response = await fetch(KML_FILE);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      const results = await Promise.allSettled(
+        KML_FILES.map(item => loadKmlLayer(item.file, item.label))
+      );
+
+      let statusLines = [];
+
+      results.forEach((result, index) => {
+        const item = KML_FILES[index];
+
+        if (result.status === 'fulfilled') {
+          const layerInfo = result.value;
+
+          overlays[item.label] = layerInfo.layer;
+
+          if (item.visible) {
+            layerInfo.layer.addTo(map);
+          }
+
+          totalMarkers += layerInfo.count;
+          loadedLayers++;
+
+          statusLines.push(`${item.label}: ${layerInfo.count} נקודות`);
+        } else {
+          statusLines.push(`${item.label}: שגיאה`);
+          console.error(`Layer load failed: ${item.file}`, result.reason);
+        }
+      });
+
+      L.control.layers(null, overlays, {
+        collapsed: false
+      }).addTo(map);
+
+      if (allBounds.length > 0) {
+        map.fitBounds(allBounds, { padding: [20, 20] });
       }
 
-      const kmlText = await response.text();
-      const parser = new DOMParser();
-      const xml = parser.parseFromString(kmlText, 'application/xml');
-
-      const parseError = xml.getElementsByTagName('parsererror');
-      if (parseError.length > 0) {
-        throw new Error('XML parse error');
-      }
-
-      const placemarks = xml.getElementsByTagName('Placemark');
-      const bounds = [];
-      let addedCount = 0;
-
-      for (let i = 0; i < placemarks.length; i++) {
-        const placemark = placemarks[i];
-
-        const name = getNodeText(placemark, 'name') || 'ללא שם';
-        const descriptionRaw = getNodeText(placemark, 'description');
-        const coordinatesRaw = getNodeText(placemark, 'coordinates');
-
-        const coord = parseCoordinates(coordinatesRaw);
-        if (!coord) continue;
-
-        const descriptionHtml = normalizeDescriptionHtml(descriptionRaw);
-
-        const popupHtml = `
-          <div class="popup-wrap">
-            <div class="popup-title">${escapeHtml(name)}</div>
-            <div class="popup-body">${descriptionHtml}</div>
-          </div>
-        `;
-
-        const marker = L.marker([coord.lat, coord.lon]).addTo(map);
-        marker.bindPopup(popupHtml, {
-          maxWidth: 360,
-          minWidth: 300
-        });
-
-        bounds.push([coord.lat, coord.lon]);
-        addedCount++;
-      }
-
-      if (bounds.length > 0) {
-        map.fitBounds(bounds, { padding: [20, 20] });
-      }
-
-      setStatus(`נטענו ${addedCount} נקודות מתוך ${placemarks.length}`);
+      setStatus(
+        `נטענו ${loadedLayers} שכבות\n` +
+        `סה"כ ${totalMarkers} נקודות\n\n` +
+        statusLines.join('\n')
+      );
     } catch (err) {
-      console.error('Failed loading KML:', err);
-      setStatus('שגיאה בטעינת הקובץ');
-      alert('Failed to load KML file: ' + err.message);
+      console.error(err);
+      setStatus('שגיאה כללית בטעינת השכבות');
+      alert('שגיאה בטעינת השכבות: ' + err.message);
     }
   }
 
-  loadKml();
+  initMap();
 </script>
 
 </body>
